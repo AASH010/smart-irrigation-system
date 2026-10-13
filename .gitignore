@@ -1,0 +1,50 @@
+# Embedded and PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+*.hex
+*.bin
+*.elf
+*.o
+*.obj
+*.d
+build/
+*.build/
+*.bak
+*~.fzz
+# Software and Web Dependencies
+node_modules/
+jspm_packages/
+.next/
+out/
+dist/
+*.log
+# AI and Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.ipynb_checkpoints/
+*.h5
+*.pkl
+*.pt
+*.pth
+*.onnx
+*.csv
+*.xlsx
+*.parquet
+!03_ai/data/sample_*.csv
+# Secrets and Environment Configs
+.env
+.env.local
+credentials.json
+secrets.h
+# OS and Editor Configs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
