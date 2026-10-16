@@ -100,6 +100,16 @@ If the connection fails or times out, the test should report an error and exit w
 
 This test verifies connectivity to the selected public MQTT broker. It does not independently verify telemetry publishing, message subscription, or pump command delivery.
 
+### Connection Test Results
+
+- Successful connection: Verified using the configured public MQTT broker.
+- Invalid broker address: Tested using an intentionally invalid hostname.
+- Expected failure behavior: The script printed an error message and exited
+  with a non-zero exit code (`1`).
+- Configuration: The broker settings are loaded from `.env.example`.
+
+Note: The invalid hostname was used only for testing and was not committed.
+
 ### Security Note
 
 `.env.example` is a configuration template and must not contain real credentials or secrets.
