@@ -1,0 +1,84 @@
+
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AeroSoil Telemetry Schema",
+  "description": "Standard JSON structure for AeroSoil smart irrigation sensor telemetry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "device_id",
+    "timestamp",
+    "sensors",
+    "actuators"
+  ],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier of the ESP32 device."
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Unix timestamp in seconds."
+    },
+    "sensors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "soil_moisture_pct",
+        "soil_temperature_c",
+        "soil_ph",
+        "nitrogen_mg_kg",
+        "phosphorus_mg_kg",
+        "potassium_mg_kg"
+      ],
+      "properties": {
+        "soil_moisture_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Soil moisture percentage."
+        },
+        "soil_temperature_c": {
+          "type": "number",
+          "description": "Soil temperature in degrees Celsius."
+        },
+        "soil_ph": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 14,
+          "description": "Soil pH value."
+        },
+        "nitrogen_mg_kg": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Soil nitrogen concentration in mg/kg, or null if unavailable."
+        },
+        "phosphorus_mg_kg": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Soil phosphorus concentration in mg/kg, or null if unavailable."
+        },
+        "potassium_mg_kg": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Soil potassium concentration in mg/kg, or null if unavailable."
+        }
+      }
+    },
+    "actuators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pump_state"
+      ],
+      "properties": {
+        "pump_state": {
+          "type": "boolean",
+          "description": "Reported pump state: true means ON, false means OFF."
+        }
+      }
+    }
+  }
+}
