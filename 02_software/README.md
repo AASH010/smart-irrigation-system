@@ -11,6 +11,7 @@ The current implementation includes:
 * A telemetry subscriber that receives and displays sensor data and the reported pump state.
 * Telemetry data models and validation services.
 * Automated tests for telemetry models and JSON validation.
+* Tests for rejecting non-finite sensor readings, including NaN and Infinity.
 * Temporary development scripts used during testing.
 * Pump command testing scripts for publishing and receiving ON/OFF commands.
 * A shared MQTT topic and JSON payload specification.
@@ -18,8 +19,6 @@ The current implementation includes:
 The current implementation is intended for development and testing. Physical ESP32 integration, database storage, REST API functionality, and complete pump control integration are separate development activities.
 
 ## 2. Project Structure
-
-The current backend directory is organized as follows:
 
 ```text
 02_software/
@@ -96,13 +95,13 @@ Install the dependencies before running the backend scripts or automated tests.
 
 The current development configuration uses the public HiveMQ broker.
 
-| Setting                       | Value                             |
-| ----------------------------- | --------------------------------- |
-| Broker host                   | `broker.hivemq.com`               |
-| Broker port                   | `1883`                            |
-| Telemetry topic               | `smart-irrigation/telemetry`      |
-| Pump command topic            | `smart-irrigation/actuators/pump` |
-| Telemetry publishing interval | 5 seconds                         |
+| Setting | Value |
+|---|---|
+| Broker host | `broker.hivemq.com` |
+| Broker port | `1883` |
+| Telemetry topic | `smart-irrigation/telemetry` |
+| Pump command topic | `smart-irrigation/actuators/pump` |
+| Telemetry publishing interval | 5 seconds |
 
 The configuration template is located at:
 
@@ -121,7 +120,7 @@ The public broker is suitable for development and testing only. Messages on publ
 The telemetry pipeline consists of two scripts:
 
 * `backend/mock_esp32.py`: Generates simulated sensor readings and publishes them to the telemetry topic every five seconds.
-* `backend/subscriber.py`: Subscribes to the telemetry topic, parses incoming JSON messages, and displays the received readings.
+* `backend/subscriber.py`: Subscribes to the telemetry topic, parses incoming JSON messages, validates the payload, and displays the received readings.
 
 ### 6.1 Start the Subscriber
 
@@ -159,10 +158,10 @@ All publishers and subscribers must use the agreed topic names, field names, dat
 
 ### 7.1 MQTT Topics
 
-| Type          | MQTT Topic                        | Purpose                                               |
-| ------------- | --------------------------------- | ----------------------------------------------------- |
-| Telemetry     | `smart-irrigation/telemetry`      | Publishes sensor readings and the reported pump state |
-| Pump commands | `smart-irrigation/actuators/pump` | Carries pump ON/OFF control commands                  |
+| Type | MQTT Topic | Purpose |
+|---|---|---|
+| Telemetry | `smart-irrigation/telemetry` | Publishes sensor readings and the reported pump state |
+| Pump commands | `smart-irrigation/actuators/pump` | Carries pump ON/OFF control commands |
 
 ### 7.2 Telemetry JSON Payload
 
@@ -192,19 +191,19 @@ Example payload:
 
 ### 7.3 Fields, Data Types, and Units
 
-| Field                | Data type        | Unit / Description                       |
-| -------------------- | ---------------- | ---------------------------------------- |
-| `device_id`          | String           | Identifier of the sending device         |
-| `timestamp`          | Integer          | Unix timestamp in seconds                |
-| `sensors`            | Object           | Contains sensor readings                 |
-| `actuators`          | Object           | Contains actuator states                 |
-| `soil_moisture_pct`  | Number           | Soil moisture percentage (%)             |
-| `soil_temperature_c` | Number           | Soil temperature in degrees Celsius (°C) |
-| `soil_ph`            | Number           | Soil pH value                            |
-| `nitrogen_mg_kg`     | Number or `null` | Nitrogen concentration in mg/kg          |
-| `phosphorus_mg_kg`   | Number or `null` | Phosphorus concentration in mg/kg        |
-| `potassium_mg_kg`    | Number or `null` | Potassium concentration in mg/kg         |
-| `pump_state`         | Boolean          | `true` = ON, `false` = OFF               |
+| Field | Data type | Unit / Description |
+|---|---|---|
+| `device_id` | String | Identifier of the sending device |
+| `timestamp` | Integer | Unix timestamp in seconds |
+| `sensors` | Object | Contains sensor readings |
+| `actuators` | Object | Contains actuator states |
+| `soil_moisture_pct` | Number | Soil moisture percentage (%) |
+| `soil_temperature_c` | Number | Soil temperature in degrees Celsius (°C) |
+| `soil_ph` | Number | Soil pH value |
+| `nitrogen_mg_kg` | Number or `null` | Nitrogen concentration in mg/kg |
+| `phosphorus_mg_kg` | Number or `null` | Phosphorus concentration in mg/kg |
+| `potassium_mg_kg` | Number or `null` | Potassium concentration in mg/kg |
+| `pump_state` | Boolean | `true` = ON, `false` = OFF |
 
 ### 7.4 Telemetry Validation Rules
 
@@ -228,8 +227,8 @@ The model and schema enforce the following rules:
 * `pump_state` must be a Boolean.
 * Unexpected fields are rejected.
 * Required fields cannot be omitted.
-
-The Pydantic models use strict type validation to prevent invalid values, such as numeric strings or Boolean values supplied as sensor readings.
+* Sensor readings must be finite numeric values. NaN and positive or negative Infinity are rejected.
+* Numeric strings and Boolean values are not accepted as sensor readings.
 
 ### 7.5 NPK Fields Policy
 
@@ -289,8 +288,6 @@ Open PowerShell in the `02_software/backend` directory and run:
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-This command discovers and runs Python test files in `tests/` whose names match `test_*.py`.
-
 ### 8.2 Test Coverage
 
 The current test suite covers:
@@ -306,20 +303,23 @@ The current test suite covers:
 * Acceptance of integer and decimal sensor readings.
 * Rejection of string and Boolean sensor readings.
 * Rejection of non-Boolean pump states.
+* Rejection of non-finite sensor readings, including NaN and Infinity.
 * Rejection of malformed JSON.
 * Safe handling of JSON values that are not objects, including JSON arrays and `null`.
 
 ### 8.3 Expected Result
 
-A successful test run ends with output similar to:
+The latest reported test run completed successfully with 21 tests passing.
+
+Expected output:
 
 ```text
-Ran 19 tests
+Ran 21 tests
 
 OK
 ```
 
-The exact number of tests may change when the test suite is updated.
+The exact number of tests may change when the test suite is updated. Run the test command and check the actual result before reporting a successful test run.
 
 A failed test run prints the failing test and its error details. Resolve the issue and rerun the suite before considering the changes verified.
 
@@ -433,20 +433,20 @@ This test verifies broker connectivity only. It does not independently verify te
 
 ## 11. Current Implementation Status
 
-| Component                         | Purpose                                                          | Status                                                                    |
-| --------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| MQTT broker configuration         | Defines broker and topic settings                                | Implemented; connectivity tests reported                                  |
-| `mock_esp32.py`                   | Publishes simulated telemetry                                    | Implemented                                                               |
-| `subscriber.py`                   | Receives and displays telemetry                                  | Implemented; compatibility with the reference schema should be maintained |
-| `models/telemetry.py`             | Defines telemetry models and data constraints                    | Implemented; model tests passed                                           |
-| `services/validation.py`          | Parses and validates telemetry JSON                              | Implemented; validation tests passed                                      |
-| `tests/test_validation.py`        | Tests telemetry models and validation behavior                   | 19 tests reported passing                                                 |
-| `tests/brokerTEST.py`             | Tests broker connectivity                                        | Successful and failure cases reported                                     |
-| `tests/pump_command_publisher.py` | Publishes pump commands                                          | Added for testing                                                         |
-| `tests/pump_command_test.py`      | Receives pump commands                                           | Added for testing                                                         |
-| Database storage                  | Persists validated telemetry                                     | Not yet verified                                                          |
-| REST API                          | Exposes stored telemetry                                         | Not yet verified                                                          |
-| End-to-end pump control           | Receives a command, executes it, and reports the resulting state | Not yet verified with a physical device                                   |
+| Component | Purpose | Status |
+|---|---|---|
+| MQTT broker configuration | Defines broker and topic settings | Implemented; connectivity tests reported |
+| `mock_esp32.py` | Publishes simulated telemetry | Implemented |
+| `subscriber.py` | Receives and displays telemetry | Implemented; compatibility with the reference schema should be maintained |
+| `models/telemetry.py` | Defines telemetry models and data constraints | Implemented; strict validation includes rejection of non-finite sensor readings |
+| `services/validation.py` | Parses and validates telemetry JSON | Implemented; validation tests passed |
+| `tests/test_validation.py` | Tests telemetry models and validation behavior | 21 tests passed in the latest reported run |
+| `tests/brokerTEST.py` | Tests broker connectivity | Successful and failure cases reported |
+| `tests/pump_command_publisher.py` | Publishes pump commands | Added for testing |
+| `tests/pump_command_test.py` | Receives pump commands | Added for testing |
+| Database storage | Persists validated telemetry | Not yet verified |
+| REST API | Exposes stored telemetry | Not yet verified |
+| End-to-end pump control | Receives a command, executes it, and reports the resulting state | Not yet verified with a physical device |
 
 The status table reflects the reported development results. A component should be marked fully verified only after its current version has been run and tested.
 
