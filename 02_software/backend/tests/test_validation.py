@@ -131,6 +131,20 @@ class TestTelemetryModel(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Telemetry.model_validate(payload)
 
+    def test_nan_sensor_reading_is_rejected(self):
+        payload = valid_payload()
+        payload["sensors"]["soil_moisture_pct"] = float("nan")
+
+        with self.assertRaises(ValidationError):
+            Telemetry.model_validate(payload)
+
+    def test_infinite_sensor_reading_is_rejected(self):
+        payload = valid_payload()
+        payload["sensors"]["soil_temperature_c"] = float("inf")
+
+        with self.assertRaises(ValidationError):
+            Telemetry.model_validate(payload)
+
 
 class TestTelemetryValidationService(unittest.TestCase):
 
