@@ -8,6 +8,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    FiniteFloat,
 )
 
 
@@ -20,14 +21,13 @@ class StrictModel(BaseModel):
     )
 
 
-# Accept integers and decimals without accepting strings or booleans.
-SensorNumber = Annotated[int, Field(strict=True)] | Annotated[
-    float, Field(strict=True)
-]
+# Accept integers and finite decimals without strings or booleans.
+SensorNumber = Annotated[int, Field(strict=True)] | FiniteFloat
 
-NonNegativeSensorNumber = Annotated[
-    int, Field(strict=True, ge=0)
-] | Annotated[float, Field(strict=True, ge=0)]
+NonNegativeSensorNumber = (
+    Annotated[int, Field(strict=True, ge=0)]
+    | Annotated[FiniteFloat, Field(ge=0)]
+)
 
 
 class SensorReadings(StrictModel):
@@ -35,7 +35,9 @@ class SensorReadings(StrictModel):
         SensorNumber,
         Field(ge=0, le=100),
     ]
+
     soil_temperature_c: SensorNumber
+
     soil_ph: Annotated[
         SensorNumber,
         Field(ge=0, le=14),
