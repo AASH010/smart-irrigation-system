@@ -1,0 +1,35 @@
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest cache and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Runtime databases
+/storage/databases/**
+!/storage/databases/.gitkeep
+
+/storage/raw_databases/**
+!/storage/raw_databases/.gitkeep
+
+# Runtime telemetry and processing records
+/storage/failed/**
+!/storage/failed/.gitkeep
+
+/storage/invalid/**
+!/storage/invalid/.gitkeep
+
+/storage/reprocessed/**
+!/storage/reprocessed/.gitkeep
+
+# Temporary local checks
+/tests/temporary/
