@@ -1,709 +1,968 @@
-**# AeroSoil Smart Irrigation — Testing Guide**
+# AeroSoil — Backend Testing Guide
 
-**## 1. Requirements**
+## 1. Purpose
 
-- Python 3.10 or newer.
-- Install the dependencies listed in `requirements.txt`.
-- Internet access for live MQTT broker connectivity and messaging tests.
-- Run commands from the backend directory unless otherwise specified.
-- Ensure the MQTT broker and topics configured in each script are accessible before running live messaging tests.
-- Ensure the backend has permission to create and update files under `storage/`.
-- Use pytest to run the automated test suite.
+This document explains how to test and verify the AeroSoil Smart Irrigation backend.
 
-**## 2. Project Structure**
+It covers:
+
+- Telemetry data validation.
+- Database operations and persistence.
+- Raw telemetry storage.
+- MQTT subscriber behavior.
+- Telemetry repository operations.
+- Invalid telemetry processing.
+- Failed telemetry recovery.
+- End-to-end telemetry pipeline integration.
+- REST API endpoints.
+- ESP32 simulation.
+- MQTT scenario simulation.
+- Pump command publishing and testing.
+
+**Important:** A file's presence does not prove that its tests pass. Test results must be confirmed by running the relevant commands in the current environment.
+
+---
+
+## 2. Backend Project Structure
+
+The following structure is based on the directory listing supplied for the backend.
 
 ```text
-02_software/
-├── README.md
-└── backend/
-    ├── .env.example
-    ├── .gitkeep
-    ├── requirements.txt
-    ├── subscriber.py
-    ├── TESTING_GUIDE.md
-    │
-    ├── database/
-    │   ├── connection.py
-    │   ├── database_manager.py
-    │   └── raw_database_manager.py
-    │
-    ├── models/
-    │   └── telemetry.py
-    │
-    ├── repositories/
-    │   └── telemetry_repository.py
-    │
-    ├── schemas/
-    │   └── telemetry.schema.json
-    │
-    ├── services/
-    │   ├── invalid_telemetry_processor.py
-    │   ├── telemetry_recovery_service.py
-    │   └── validation.py
-    │
-    ├── simulators/
-    │   ├── mock_esp32.py
-    │   ├── mock_esp32_invalid_telemetry.py
-    │   └── mqtt_scenario_simulator.py
-    │
-    ├── storage/
-    │   ├── databases/
-    │   ├── failed/
-    │   ├── invalid/
-    │   ├── raw_databases/
-    │   └── reprocessed/
-    │
-    └── tests/
-        ├── brokerTEST.py
-        ├── pump_command_publisher.py
-        ├── pump_command_test.py
-        ├── test_database_manager.py
-        ├── test_integration_telemetry_pipeline.py
-        ├── test_invalid_telemetry_processor.py
-        ├── test_raw_database_manager.py
-        ├── test_subscriber.py
-        ├── test_telemetry_recovery.py
-        ├── test_telemetry_repository.py
-        ├── test_validation.py
-        │
-        └── temporary/
-            ├── check_model.py
-            └── check_validation.py
+backend/
+│
+├── .env.example
+├── .gitignore
+├── .gitkeep
+├── requirements.txt
+├── subscriber.py
+├── TESTING_GUIDE.md
+│
+├── api/
+│   ├── main.py
+│   └── routes/
+│       ├── health_routes.py
+│       ├── telemetry_routes.py
+│       └── __init__.py
+│
+├── database/
+│   ├── connection.py
+│   ├── database_manager.py
+│   └── raw_database_manager.py
+│
+├── models/
+│   └── telemetry.py
+│
+├── repositories/
+│   └── telemetry_repository.py
+│
+├── schemas/
+│   └── telemetry.schema.json
+│
+├── services/
+│   ├── invalid_telemetry_processor.py
+│   ├── telemetry_recovery_service.py
+│   └── validation.py
+│
+├── simulators/
+│   ├── mock_esp32.py
+│   ├── mock_esp32_invalid_telemetry.py
+│   └── mqtt_scenario_simulator.py
+│
+├── storage/
+│   ├── databases/
+│   │   └── telemetry_20261021_101820.db
+│   ├── failed/
+│   ├── invalid/
+│   │   ├── invalid_2026-10-21_0001.jsonl
+│   │   └── invalid_2026-10-22_0001.jsonl
+│   ├── raw_databases/
+│   │   └── raw_telemetry.db
+│   └── reprocessed/
+│       └── reprocessed_2026-10-21.jsonl
+│
+├── tests/
+│   ├── brokerTEST.py
+│   ├── pump_command_publisher.py
+│   ├── pump_command_test.py
+│   ├── test_api.py
+│   ├── test_database_manager.py
+│   ├── test_integration_telemetry_pipeline.py
+│   ├── test_invalid_telemetry_processor.py
+│   ├── test_raw_database_manager.py
+│   ├── test_subscriber.py
+│   ├── test_telemetry_recovery.py
+│   ├── test_telemetry_repository.py
+│   ├── test_validation.py
+│   │
+│   ├── temporary/
+│   │   ├── check_model.py
+│   │   └── check_validation.py
+│   │
+│   └── __pycache__/
+│
+└── __pycache__/
 ```
 
-**Directory responsibilities:**
+### Notes about the structure
 
-- `database/`: Database connections, primary database management, and raw database management.
-- `models/`: Strict telemetry data models.
-- `repositories/`: Telemetry persistence and retrieval operations.
-- `schemas/`: JSON Schema for telemetry payloads.
-- `services/`: Validation, invalid telemetry processing, and failed-message recovery.
-- `simulators/`: Three separate MQTT telemetry simulators.
-- `storage/databases/`: Primary telemetry database files.
-- `storage/raw_databases/`: Raw telemetry database files.
-- `storage/failed/`: Failed telemetry records that require retry or investigation.
-- `storage/invalid/`: Invalid telemetry audit records.
-- `storage/reprocessed/`: Audit records for recovery and reprocessing outcomes.
-- `tests/`: Automated test modules and manual MQTT test scripts.
-- `tests/temporary/`: Optional model and validation checks.
+- `api/` contains the REST API application and its route modules.
+- `database/` contains database connection and database management modules.
+- `models/` defines the telemetry data model.
+- `repositories/` provides the telemetry repository layer.
+- `schemas/` contains the JSON Schema definition for telemetry.
+- `services/` contains validation, invalid-data processing, and recovery logic.
+- `simulators/` contains simulated ESP32 and MQTT scenarios.
+- `storage/` contains local databases and telemetry processing records.
+- `tests/` contains automated tests and manual testing utilities.
+- `__pycache__/` and `.pytest_cache/` contain generated Python or pytest cache data. They are not application source files and normally should not be edited manually.
 
-Python cache directories and `.pytest_cache/` are generated automatically and are not application source files.
+The tree above focuses on relevant source files and omits cache-file details for readability.
 
-**## 3. Install Dependencies**
+---
 
-**Working directory:** `02_software/backend/`
+## 3. Environment Setup
+
+Run all commands from the backend directory:
+
+```powershell
+cd "D:\projects\uni.project AeroSoil\AeroSoilMAIN\smart-irrigation-system-main\02_software\backend"
+```
+
+### 3.1 Create a virtual environment
+
+If one does not already exist:
+
+```powershell
+python -m venv .venv
+```
+
+Activate it:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation, use an approved activation method for your environment or invoke the virtual environment's Python executable directly.
+
+### 3.2 Install dependencies
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-Verify Python and pytest:
+### 3.3 Verify pytest
 
 ```powershell
-python --version
 python -m pytest --version
 ```
 
-If pytest is missing and is not installed through the project's dependencies, install it with:
+### 3.4 Verify the project files
+
+To list the automated test files:
 
 ```powershell
-python -m pip install pytest
+Get-ChildItem .\tests\test_*.py
 ```
 
-**## 4. Run the Complete Automated Test Suite**
-
-**Working directory:** `02_software/backend/`
-
-Run the complete pytest suite:
+To list all Python files directly under `tests`:
 
 ```powershell
-python -m pytest -v
+Get-ChildItem .\tests\*.py
 ```
 
-For shorter output focused on failures:
+The second command includes utility scripts such as `brokerTEST.py` and `pump_command_publisher.py` that do not match the `test_*.py` naming convention.
+
+---
+
+## 4. Automated Test Files
+
+The following sections describe each test file based on its filename and role in the project. Exact assertions and test coverage must be confirmed by inspecting the file's code.
+
+### 4.1 `tests/test_validation.py`
+
+**Purpose:** Tests telemetry validation.
+
+Areas to verify:
+
+- Acceptance of valid telemetry.
+- Rejection of missing or malformed fields.
+- Validation of telemetry values and types.
+- Handling of invalid payloads.
+
+**Run:**
 
 ```powershell
-python -m pytest -v --tb=short
+python -m pytest tests/test_validation.py -v
 ```
 
-For concise output:
+**Expected result:** All validation tests pass, and invalid telemetry is rejected according to the project's validation rules.
+
+### 4.2 `tests/test_database_manager.py`
+
+**Purpose:** Tests the main database management module.
+
+Areas to verify:
+
+- Database initialization.
+- Telemetry insertion and retrieval.
+- Database operations and error handling.
+- Persistence of saved telemetry.
+
+**Run:**
 
 ```powershell
-python -m pytest -q
+python -m pytest tests/test_database_manager.py -v
 ```
 
-To list the tests discovered by pytest without executing them:
+**Expected result:** Database operations behave according to the test assertions, without unexpected database errors.
+
+### 4.3 `tests/test_raw_database_manager.py`
+
+**Purpose:** Tests raw telemetry database operations.
+
+Areas to verify:
+
+- Storage of incoming raw telemetry.
+- Retrieval of stored raw records.
+- Database initialization and persistence.
+- Handling of raw payload records.
+
+**Run:**
 
 ```powershell
-python -m pytest --collect-only -q
+python -m pytest tests/test_raw_database_manager.py -v
 ```
 
-**### Latest recorded test result**
+**Expected result:** Raw database operations satisfy the test assertions.
 
-The latest successful automated test run recorded during development was:
+### 4.4 `tests/test_telemetry_repository.py`
+
+**Purpose:** Tests the telemetry repository layer.
+
+Areas to verify:
+
+- Saving telemetry through the repository.
+- Retrieving stored telemetry.
+- Handling duplicate records or conflicts, if covered by the implementation.
+- Consistency between repository operations and database storage.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_telemetry_repository.py -v
+```
+
+**Expected result:** Repository operations return the expected results and handle tested conflicts correctly.
+
+### 4.5 `tests/test_subscriber.py`
+
+**Purpose:** Tests the MQTT subscriber component.
+
+Areas to verify:
+
+- Subscriber message handling.
+- Processing incoming telemetry messages.
+- Interaction with validation and storage.
+- Handling of malformed or unsuccessful message processing, if covered.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_subscriber.py -v
+```
+
+**Expected result:** Subscriber behavior matches the assertions in the test file.
+
+An automated subscriber test does not necessarily prove that the real MQTT broker is reachable. Broker connectivity should be verified separately when required.
+
+### 4.6 `tests/test_api.py`
+
+**Purpose:** Tests the REST API.
+
+Areas to verify:
+
+- API route availability.
+- Health endpoint behavior.
+- Telemetry endpoint responses.
+- Request parameter handling.
+- Response status codes and data formats.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_api.py -v
+```
+
+**Expected result:** All API assertions pass.
+
+The actual endpoints and tested response fields must be confirmed from `api/routes/health_routes.py`, `api/routes/telemetry_routes.py`, and `tests/test_api.py`.
+
+### 4.7 `tests/test_invalid_telemetry_processor.py`
+
+**Purpose:** Tests the invalid telemetry processing service.
+
+Areas to verify:
+
+- Detection or processing of invalid telemetry records.
+- Recording invalid payloads.
+- Handling of invalid-data files or records.
+- Behavior when processing fails, if covered.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_invalid_telemetry_processor.py -v
+```
+
+**Expected result:** Invalid telemetry processing follows the expected rules without losing records that the tests require to be preserved.
+
+### 4.8 `tests/test_telemetry_recovery.py`
+
+**Purpose:** Tests failed telemetry recovery.
+
+Areas to verify:
+
+- Discovery of failed telemetry records.
+- Retrying or reprocessing eligible records.
+- Successful recovery and persistence.
+- Handling of duplicates and conflicts.
+- Recovery audit results, if implemented and tested.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_telemetry_recovery.py -v
+```
+
+**Expected result:** Recovery behavior matches the assertions in the test suite.
+
+A recovery test should verify more than the worker starting. Where applicable, verify that the record is actually recovered, stored, and audited.
+
+### 4.9 `tests/test_integration_telemetry_pipeline.py`
+
+**Purpose:** Tests the telemetry pipeline across multiple components.
+
+Areas to verify:
+
+- Telemetry entering the pipeline.
+- Validation and processing.
+- Persistence in the appropriate storage layer.
+- Interactions between services, repositories, and databases.
+- Error handling across component boundaries.
+
+**Run:**
+
+```powershell
+python -m pytest tests/test_integration_telemetry_pipeline.py -v
+```
+
+**Expected result:** The integration assertions pass for the components and scenarios covered by the test.
+
+An integration test does not automatically prove that every external component, such as a physical ESP32 or a separately running broker, has been tested.
+
+### 4.10 `tests/pump_command_test.py`
+
+**Purpose:** Tests the pump-command workflow.
+
+Areas to verify:
+
+- Construction or publishing of a pump command.
+- Expected command payload or topic, if asserted.
+- Handling of the command-publishing result.
+
+**Run:**
+
+```powershell
+python -m pytest tests/pump_command_test.py -v
+```
+
+**Expected result:** The command test passes according to its assertions.
+
+**Safety note:** Before using this test against real hardware, inspect its code and confirm whether it publishes to a real broker or could activate physical equipment. Prefer a test broker or isolated topic during development.
+
+---
+
+## 5. Test File Versus Utility Script
+
+Not every Python file in `tests/` is necessarily a pytest test.
+
+### 5.1 `tests/brokerTEST.py`
+
+**Role:** Broker-related testing utility, based on its filename.
+
+Use it to investigate MQTT broker connectivity or messaging only after checking its code for the broker address, credentials, topic names, and publishing behavior.
+
+It is not named `test_*.py`, so do not assume it will be included in the standard pytest discovery run.
+
+### 5.2 `tests/pump_command_publisher.py`
+
+**Role:** Pump-command publishing utility.
+
+This script may publish a command rather than simply assert expected behavior. Inspect the destination broker and topic before running it.
+
+It should not be treated as a harmless unit test without verifying its implementation.
+
+### 5.3 `tests/temporary/check_model.py`
+
+**Role:** Temporary model-checking script.
+
+Likely related to inspecting or checking the telemetry model. It is located under `tests/temporary/`, so it is not automatically part of the normal test suite.
+
+Run it only after inspecting its imports and execution behavior:
+
+```powershell
+Get-Content .\tests\temporary\check_model.py
+```
+
+### 5.4 `tests/temporary/check_validation.py`
+
+**Role:** Temporary validation-checking script.
+
+Likely related to manual validation checks. Inspect it before running:
+
+```powershell
+Get-Content .\tests\temporary\check_validation.py
+```
+
+These temporary scripts are separate from the main automated test suite.
+
+---
+
+## 6. Running the Automated Test Suite
+
+### 6.1 Run all tests
+
+From the backend directory:
+
+```powershell
+python -m pytest tests -v
+```
+
+This runs tests discovered by pytest under `tests/`. It does not guarantee that every `.py` file is executed.
+
+### 6.2 Run tests with a concise summary
+
+```powershell
+python -m pytest tests -q
+```
+
+### 6.3 Run a specific test module
+
+For example:
+
+```powershell
+python -m pytest tests/test_telemetry_recovery.py -v
+```
+
+### 6.4 Stop after the first failure
+
+```powershell
+python -m pytest tests -x -v
+```
+
+### 6.5 Show detailed failure information
+
+```powershell
+python -m pytest tests -vv --tb=long
+```
+
+### 6.6 Check which tests pytest discovers
+
+```powershell
+python -m pytest tests --collect-only -q
+```
+
+Use this command to inspect the collected test count and verify whether the expected test functions are discovered.
+
+### Test result interpretation
+
+- `passed`: the test completed successfully.
+- `failed`: an assertion or test condition failed.
+- `error`: test execution encountered an error, such as a fixture or setup failure.
+- `skipped`: the test was intentionally not run.
+- `deselected`: the test was excluded by a selection rule.
+
+Do not count a run as successful merely because pytest started. Review its final summary and process exit code.
+
+---
+
+## 7. API Verification
+
+The backend contains the following API modules:
 
 ```text
-108 passed in 2.04s
+api/
+├── main.py
+└── routes/
+    ├── health_routes.py
+    └── telemetry_routes.py
 ```
 
-This is a previously recorded result. Run the suite again to verify the current checkout. Test counts and execution times may change as the code, dependencies, and test modules change.
+### 7.1 Start the API
 
-The result applies to tests discovered and executed by pytest during that run. It does not automatically verify every manual MQTT test, every simulator scenario, physical pump operation, or deployment configuration.
-
-**### Test coverage by file**
-
-| Test file | Main coverage |
-|---|---|
-| `test_database_manager.py` | Database initialization, schema creation, valid database filenames, and database rotation. |
-| `test_raw_database_manager.py` | Raw telemetry database management and related operations. |
-| `test_telemetry_repository.py` | Telemetry insertion, duplicate prevention, conflicts, retrieval, and query limits. |
-| `test_validation.py` | Telemetry validation, required fields, strict data types, numeric ranges, and JSON handling. |
-| `test_subscriber.py` | Subscriber message handling, validation, and MQTT-related behavior covered by the tests. |
-| `test_invalid_telemetry_processor.py` | Invalid record processing, supported aliases and repairs, audit outcomes, and source preservation. |
-| `test_telemetry_recovery.py` | Failed-message recovery, duplicate handling, retry limits, conflicts, and invalid record preservation. |
-| `test_integration_telemetry_pipeline.py` | Integrated telemetry processing, persistence, duplicate and conflict handling, retry behavior, and audit records. |
-
-**### Run an individual test module**
-
-Run a specific module when investigating a failure.
-
-Database manager:
+From the backend directory:
 
 ```powershell
-python -m pytest -v tests/test_database_manager.py
+python -m uvicorn api.main:app --reload
 ```
 
-Raw database manager:
+If `uvicorn` is unavailable, check `requirements.txt` and install the declared dependencies.
 
-```powershell
-python -m pytest -v tests/test_raw_database_manager.py
-```
-
-Telemetry repository:
-
-```powershell
-python -m pytest -v tests/test_telemetry_repository.py
-```
-
-Validation:
-
-```powershell
-python -m pytest -v tests/test_validation.py
-```
-
-Subscriber:
-
-```powershell
-python -m pytest -v tests/test_subscriber.py
-```
-
-Invalid telemetry processor:
-
-```powershell
-python -m pytest -v tests/test_invalid_telemetry_processor.py
-```
-
-Telemetry recovery:
-
-```powershell
-python -m pytest -v tests/test_telemetry_recovery.py
-```
-
-Integration pipeline:
-
-```powershell
-python -m pytest -v tests/test_integration_telemetry_pipeline.py
-```
-
-**## 5. Integration Test Details**
-
-The integration test module is:
-
-`tests/test_integration_telemetry_pipeline.py`
-
-It verifies interactions between the telemetry processing components covered by the tests.
-
-Reported test coverage includes:
-
-- Repairing recognized legacy field aliases and saving valid telemetry.
-- Preventing eligible terminal records from being processed again.
-- Detecting duplicate telemetry records.
-- Detecting conflicting records with the same device and timestamp.
-- Retrying eligible records after a temporary database error.
-- Recording unrepairable records in audit logs while preserving source information.
-- Verifying relevant telemetry processing and persistence behavior across the integrated pipeline.
-
-The repository, database manager, raw database manager, validation, subscriber, invalid processor, and recovery components also have dedicated test modules.
-
-Run the integration test independently when investigating a failure that involves more than one component.
-
-**## 6. Run Temporary Development Checks**
-
-These scripts are optional development checks. They are separate from the automated pytest suite unless they are explicitly collected as tests.
-
-**Working directory:** `02_software/backend/`
-
-Model check:
-
-```powershell
-python tests/temporary/check_model.py
-```
-
-Validation check:
-
-```powershell
-python tests/temporary/check_validation.py
-```
-
-These commands assume the scripts exist and support execution from the backend directory. Their results are not automatically included in the pytest test count.
-
-**## 7. Test MQTT Broker Connectivity**
-
-**Working directory:** `02_software/backend/`
-
-Run the broker connectivity test:
-
-```powershell
-python tests/brokerTEST.py
-```
-
-A successful connection may produce output similar to:
+Open Swagger UI in a browser:
 
 ```text
-[SUCCESS] Connected to MQTT Broker: broker.hivemq.com
+http://127.0.0.1:8000/docs
 ```
 
-The exact output depends on the script implementation.
+### 7.2 Verify the health endpoint
 
-A successful result confirms broker connectivity at the time of the test. It does not independently confirm telemetry validation, database persistence, message recovery, or physical pump operation.
+Inspect `api/routes/health_routes.py` and identify the actual health route. Use Swagger UI to call it.
 
-Verify that the broker address, port, and credentials used by the test match the current configuration.
+Verify:
 
-**## 8. Test Valid Telemetry Publishing and Receiving**
+- The route responds successfully.
+- The response has the expected format.
+- Any reported status matches the implementation.
 
-This test checks MQTT messaging between the valid ESP32 simulator and the backend subscriber.
+Do not assume a specific health URL without checking the route definition.
 
-Open two PowerShell terminals.
+### 7.3 Verify telemetry endpoints
 
-**### Terminal 1 — Start the Subscriber**
+Inspect `api/routes/telemetry_routes.py` to identify the actual telemetry routes and supported query parameters.
 
-**Working directory:** `02_software/backend/`
+For a history endpoint, where supported, verify:
 
-```powershell
-python subscriber.py
-```
+- A request returns the expected status code.
+- The response contains the expected structure.
+- The record count matches the returned records.
+- Device and time filters are applied correctly.
+- Invalid query parameters are handled appropriately.
 
-The standard telemetry topic is:
+For a latest-telemetry endpoint, where supported, verify:
+
+- The returned record corresponds to the latest record under the endpoint's documented selection rules.
+- The response is consistent with stored data.
+- The no-data case is handled correctly, if covered by the implementation.
+
+### 7.4 Previously recorded manual API checks
+
+The project notes from the earlier development session recorded successful manual checks of the history and latest telemetry endpoints.
+
+The history check used these parameters:
 
 ```text
-smart-irrigation/telemetry
+limit=10
+device_id=esp32_station_01
+start_time=2026-10-24T01:00:00Z
+end_time=2026-10-24T01:10:00Z
 ```
 
-Confirm that the subscriber uses the same broker and topic as the simulator.
-
-**### Terminal 2 — Start the Valid ESP32 Simulator**
-
-**Working directory:** `02_software/backend/`
-
-```powershell
-python simulators/mock_esp32.py
-```
-
-The simulator is intended to publish normal telemetry readings.
-
-Verify that:
-
-1. The publisher reports its publishing activity.
-2. The subscriber receives the messages.
-3. The payload passes the current validation rules.
-4. The message is processed according to the implemented pipeline.
-5. The relevant database records or logs confirm the processing result.
-
-Press `Ctrl+C` in each terminal to stop the scripts.
-
-**Important:** Successful MQTT publication alone does not prove that the subscriber accepted the message or that the telemetry was saved to the database. Check the subscriber output and relevant storage records.
-
-**## 9. Test Invalid Telemetry Publishing and Receiving**
-
-This test uses the simulator specifically intended to publish invalid telemetry.
-
-Open two PowerShell terminals.
-
-**### Terminal 1 — Start the Subscriber**
-
-**Working directory:** `02_software/backend/`
-
-```powershell
-python subscriber.py
-```
-
-**### Terminal 2 — Start the Invalid Telemetry Simulator**
-
-**Working directory:** `02_software/backend/`
-
-```powershell
-python simulators/mock_esp32_invalid_telemetry.py
-```
-
-Verify that:
-
-1. The simulator publishes its test messages.
-2. The subscriber receives the messages.
-3. Validation and invalid-message processing follow the implemented rules.
-4. Relevant invalid or failed records are recorded when required by the processing path.
-5. The logs or audit records identify the resulting status.
-
-Inspect the relevant storage directories:
+The recorded response contained ten records and referenced:
 
 ```text
-storage/invalid/
-storage/failed/
-storage/reprocessed/
-storage/databases/
-storage/raw_databases/
+telemetry_20261021_101820.db
 ```
 
-The expected destination depends on the message, processing result, and storage logic. Not every invalid message is expected to be repaired or placed in the failed queue.
+The recorded latest-endpoint response referenced record ID `759` from that database.
 
-Press `Ctrl+C` in each terminal to stop the scripts.
+These are **previously recorded results, not a fresh test run**. Repeat the checks against the current API and database before using them as current verification evidence.
 
-**## 10. Run the MQTT Scenario Simulator**
+The example timestamps and record IDs should not be assumed to exist in a clean or newly initialized database.
 
-The scenario simulator provides a separate way to exercise different telemetry conditions.
+---
 
-**Working directory:** `02_software/backend/`
+## 8. Simulator Testing
+
+The simulator scripts are located under `simulators/`, outside the `tests/` directory.
+
+### 8.1 `simulators/mock_esp32.py`
+
+**Purpose:** Simulates an ESP32 device.
+
+Use it to exercise the telemetry-ingestion workflow without requiring the physical device, provided the script is configured for the intended test environment.
+
+Before running, inspect:
+
+- The MQTT broker configuration.
+- The telemetry topic.
+- The device ID.
+- The payload fields.
+- The publishing interval.
+- Whether the script sends messages continuously.
+
+Run only after reviewing the script:
 
 ```powershell
-python simulators/mqtt_scenario_simulator.py
+python .\simulators\mock_esp32.py
 ```
 
-The simulator supports these scenario categories:
+### 8.2 `simulators/mock_esp32_invalid_telemetry.py`
 
-| Scenario | Purpose | What to verify |
-|---|---|---|
-| `valid` | Sends valid telemetry. | Validation and normal processing succeed. |
-| `repairable` | Sends telemetry with supported repairable issues. | The repair logic produces valid telemetry when the configured repair succeeds. |
-| `irreparable` | Sends telemetry that cannot be repaired by the supported rules. | The record remains invalid and the relevant audit information is preserved. |
-| `duplicate` | Sends duplicate telemetry. | Duplicate detection prevents an unintended second insertion. |
-| `malformed` | Sends malformed telemetry. | The backend handles the malformed message and records the applicable result. |
-| `burst` | Sends a burst of messages. | Multiple messages are handled, and the resulting processing outcomes can be checked. |
+**Purpose:** Simulates invalid telemetry messages.
 
-**### Scenario execution**
+Use it to investigate how the backend handles malformed or invalid input.
 
-Use the scenario-selection mechanism implemented in `mqtt_scenario_simulator.py`. Check its argument parser, prompts, or built-in usage instructions to determine the exact invocation for each scenario.
+Check whether the script deliberately changes field types, omits fields, or uses values that violate the project's validation rules.
 
-For each scenario:
-
-1. Start the subscriber if the scenario requires a live MQTT subscriber.
-2. Select and run the scenario.
-3. Review publisher and subscriber output.
-4. Inspect relevant database records and audit files.
-5. Compare the observed result with the intended scenario behavior.
-
-Run scenarios separately when investigating a specific processing issue.
-
-**Important:** Scenario names describe the intended test cases. They do not prove that each scenario has been executed successfully in the current checkout. Record actual results after running the tests.
-
-**## 11. Test Pump Command Delivery**
-
-This test checks MQTT delivery of pump command messages. It does not verify physical pump operation.
-
-Open two PowerShell terminals.
-
-**### Terminal 1 — Start the Pump Command Test Subscriber**
-
-**Working directory:** `02_software/backend/`
+Run only after reviewing the target broker and message behavior:
 
 ```powershell
-python tests/pump_command_test.py
+python .\simulators\mock_esp32_invalid_telemetry.py
 ```
 
-**### Terminal 2 — Start the Pump Command Publisher**
+**Expected verification:** Confirm the actual processing result in logs and storage. Do not assume that every invalid message will be stored in the same place; follow the implementation's invalid-data and failed-data paths.
 
-**Working directory:** `02_software/backend/`
+### 8.3 `simulators/mqtt_scenario_simulator.py`
+
+**Purpose:** Simulates MQTT scenarios.
+
+Use it to test the scenarios implemented in the script, such as different telemetry or message-handling conditions.
+
+The exact scenarios must be confirmed by reading the script.
 
 ```powershell
-python tests/pump_command_publisher.py
+python .\simulators\mqtt_scenario_simulator.py
 ```
 
-Follow any prompts displayed by the publisher.
+**Expected verification:** Check broker logs, subscriber output, database changes, and relevant invalid or failed records according to the selected scenario.
 
-The standard pump command topic is:
+A simulator run is not equivalent to an automated assertion-based test unless the script explicitly checks and reports its expected outcomes.
+
+---
+
+## 9. Storage and Persistence Verification
+
+The storage directory currently contains these entries in the supplied structure:
 
 ```text
-smart-irrigation/actuators/pump
+storage/
+├── databases/
+│   └── telemetry_20261021_101820.db
+├── failed/
+├── invalid/
+│   ├── invalid_2026-10-21_0001.jsonl
+│   └── invalid_2026-10-22_0001.jsonl
+├── raw_databases/
+│   └── raw_telemetry.db
+└── reprocessed/
+    └── reprocessed_2026-10-21.jsonl
 ```
 
-Verify that the test subscriber receives the published command and that its value matches the command sent.
+### 9.1 `storage/databases/`
 
-The telemetry model uses a Boolean `pump_state`:
+Contains the listed processed telemetry database file.
 
-- `true`: ON
-- `false`: OFF
+Verify that expected records persist after the ingestion workflow completes.
 
-Confirm the actual command format and topic against both test scripts before running the test.
+### 9.2 `storage/raw_databases/`
 
-**Important:** Receiving a command proves MQTT message delivery only. It does not prove that an ESP32 executed the command or that a physical pump changed state.
+Contains the listed raw telemetry database.
 
-**## 12. Data Storage and Recovery Verification**
+Use `tests/test_raw_database_manager.py` to verify raw-storage behavior and inspect `database/raw_database_manager.py` to understand the implemented operations.
 
-The backend separates primary telemetry storage, raw telemetry storage, invalid records, failed records, and reprocessing audit logs.
+### 9.3 `storage/invalid/`
 
-| Path | Purpose |
-|---|---|
-| `storage/databases/` | Primary telemetry database files. |
-| `storage/raw_databases/` | Raw telemetry database files. |
-| `storage/invalid/` | Invalid telemetry audit files. |
-| `storage/failed/` | Failed telemetry records eligible for retry or investigation. |
-| `storage/reprocessed/` | Recovery and reprocessing audit records. |
+Contains JSON Lines files associated with invalid telemetry records.
 
-### 12.1 Verify Primary Telemetry Storage
+Use `tests/test_invalid_telemetry_processor.py` and inspect `services/invalid_telemetry_processor.py` to determine how invalid records are written and processed.
 
-Use the repository and database tests:
+### 9.4 `storage/failed/`
+
+The directory exists in the supplied structure but no files were listed inside it.
+
+This does not prove that the recovery system is broken. It may simply mean that no failed records are currently present.
+
+To verify recovery, use `tests/test_telemetry_recovery.py` and inspect `services/telemetry_recovery_service.py`.
+
+### 9.5 `storage/reprocessed/`
+
+Contains a listed JSON Lines file associated with reprocessed records.
+
+Verify the relationship between reprocessed records and the database using the recovery implementation and its tests.
+
+### Persistence checklist
+
+- [ ] Valid telemetry is stored in the expected database.
+- [ ] Raw telemetry is stored where the implementation requires it.
+- [ ] Invalid telemetry is handled according to validation and processing rules.
+- [ ] Failed telemetry can be retried when eligible.
+- [ ] Reprocessed records match the recovery workflow.
+- [ ] Duplicate processing does not silently create unintended duplicate records.
+- [ ] Recovery or processing outcomes are audited where required by the implementation.
+
+Do not manually delete or modify database files or recovery records while a test or subscriber is using them.
+
+---
+
+## 10. MQTT Subscriber and Recovery Workflow
+
+The main subscriber entry point is:
+
+```text
+subscriber.py
+```
+
+Relevant supporting modules include:
+
+```text
+services/validation.py
+services/invalid_telemetry_processor.py
+services/telemetry_recovery_service.py
+repositories/telemetry_repository.py
+database/database_manager.py
+database/raw_database_manager.py
+```
+
+### Recommended verification sequence
+
+1. Inspect the MQTT settings and ensure the broker is available.
+2. Start the subscriber in a dedicated terminal.
+3. Start a simulator configured for the same broker and telemetry topic.
+4. Confirm that the subscriber receives messages.
+5. Verify that valid telemetry is stored.
+6. Send an invalid test payload using the invalid telemetry simulator.
+7. Verify that invalid data follows the expected processing path.
+8. Run the relevant recovery tests.
+9. Verify recovery outcomes in storage and audit records, if applicable.
+
+The precise ordering and behavior depend on the implementation. Use the test assertions and service code as the source of truth.
+
+**Important:** Keep test and production broker settings separate. Avoid sending test messages to a production environment.
+
+---
+
+## 11. Pump Command Testing
+
+Relevant files:
+
+```text
+tests/pump_command_publisher.py
+tests/pump_command_test.py
+```
+
+These files serve different potential roles:
+
+- `pump_command_test.py` is named as a test module and can be invoked through pytest.
+- `pump_command_publisher.py` is named as a publisher utility and may perform an actual publish operation.
+
+Run the test module:
 
 ```powershell
-python -m pytest -v tests/test_telemetry_repository.py
-python -m pytest -v tests/test_database_manager.py
+python -m pytest tests/pump_command_test.py -v
 ```
 
-When testing with the live subscriber, confirm that the specific accepted telemetry record exists in the database used by the current configuration.
-
-Do not assume that receiving a message or passing validation automatically proves a successful database commit.
-
-### 12.2 Verify Raw Telemetry Storage
-
-Run:
+Before running the publisher utility, inspect the script:
 
 ```powershell
-python -m pytest -v tests/test_raw_database_manager.py
+Get-Content .\tests\pump_command_publisher.py
 ```
 
-The raw database manager is a separate component. Confirm the subscriber's actual call path before concluding that every incoming message is stored in the raw database.
+Confirm:
 
-### 12.3 Verify Invalid Telemetry Auditing
+- The broker address and port.
+- The command topic.
+- The payload format.
+- Whether the command can control physical equipment.
+- Whether the target is an isolated test setup.
 
-Run:
+A successful command-publishing operation does not by itself prove that a physical pump received or executed the command.
 
-```powershell
-python -m pytest -v tests/test_invalid_telemetry_processor.py
-```
+---
 
-Then inspect the applicable JSONL files in `storage/invalid/`.
+## 12. Configuration and Dependencies
 
-The invalid processor and recovery service may use different audit record formats. Interpret the fields according to the component that wrote each file.
+### 12.1 `requirements.txt`
 
-### 12.4 Verify Failed Telemetry Recovery
+Defines the Python dependencies required by the backend.
 
-Run:
-
-```powershell
-python -m pytest -v tests/test_telemetry_recovery.py
-```
-
-The recovery service reads eligible failed records, validates the payload, attempts persistence, and records the result.
-
-The recovery service supports the following outcomes:
-
-| Status | Meaning |
-|---|---|
-| `recovered` | Telemetry was successfully saved during recovery. |
-| `duplicate` | The repository identified the record as a duplicate. |
-| `conflict` | The repository detected a conflict. |
-| `invalid` | The payload failed recovery validation. |
-| `failed` | Recovery failed and further handling may be required. |
-| `invalid_jsonl_record` | A failed-queue line could not be parsed as the expected JSON record. |
-
-Audit files are stored under `storage/reprocessed/`.
-
-The service defaults to a retry limit of three and a worker interval of 30 seconds. The worker must be started by the application or a test to run periodically; its presence in the code does not alone prove it is active in every execution mode.
-
-**### Recovery verification checklist**
-
-- [ ] A test message is placed in the failed queue using the supported test setup.
-- [ ] The recovery service processes the eligible record.
-- [ ] A valid record is saved or identified as a duplicate or conflict.
-- [ ] An audit entry records the resulting status.
-- [ ] Records still requiring attention remain in the failed queue.
-- [ ] Malformed source lines are preserved rather than silently discarded.
-
-Use isolated test data when checking recovery. Avoid manually editing active storage files during a live recovery run.
-
-**## 13. MQTT Configuration**
-
-The configuration template is:
-
-`backend/.env.example`
-
-The example settings include:
-
-```dotenv
-MQTT_BROKER=broker.hivemq.com
-MQTT_PORT=1883
-MQTT_USERNAME=
-MQTT_PASSWORD=
-MQTT_TIMEOUT=10
-
-MQTT_TELEMETRY_TOPIC=smart-irrigation/telemetry
-MQTT_PUMP_TOPIC=smart-irrigation/actuators/pump
-
-TELEMETRY_DATABASE_DIR=storage/databases
-TELEMETRY_DB_MAX_SIZE_MB=500
-RAW_TELEMETRY_DB_MAX_SIZE_MB=500
-```
-
-The recovery service additionally supports:
-
-```dotenv
-TELEMETRY_RECOVERY_MAX_RETRIES=3
-INVALID_FILE_MAX_MB=500
-```
-
-These are configuration examples. Confirm that the relevant module reads each variable and uses the intended path or limit before changing it.
-
-A `.env.example` file is a template and is not automatically loaded by Python. A script must explicitly load the file or receive the environment variables from its execution environment.
-
-The recovery service uses `INVALID_FILE_MAX_MB` for its JSONL append helper's file-size limit for both failed and invalid files. Do not interpret it as a global database size limit.
-
-Never commit actual credentials, passwords, or secrets.
-
-The public MQTT broker is suitable for development and testing only. Public topics may be accessed by unrelated clients, and port `1883` does not provide TLS encryption.
-
-**## 14. Quick Test Checklist**
-
-- [ ] Dependencies installed.
-- [ ] Python and pytest versions verified.
-- [ ] Complete pytest suite executed.
-- [ ] Database manager tests passed.
-- [ ] Raw database manager tests passed.
-- [ ] Telemetry repository tests passed.
-- [ ] Validation tests passed.
-- [ ] Subscriber tests passed.
-- [ ] Invalid telemetry processor tests passed.
-- [ ] Telemetry recovery tests passed.
-- [ ] Integration pipeline tests passed.
-- [ ] Temporary development checks executed when needed.
-- [ ] MQTT broker connectivity verified.
-- [ ] Valid ESP32 simulator tested.
-- [ ] Invalid telemetry simulator tested.
-- [ ] Scenario simulator `valid` case tested.
-- [ ] Scenario simulator `repairable` case tested.
-- [ ] Scenario simulator `irreparable` case tested.
-- [ ] Scenario simulator `duplicate` case tested.
-- [ ] Scenario simulator `malformed` case tested.
-- [ ] Scenario simulator `burst` case tested.
-- [ ] Primary telemetry database behavior verified.
-- [ ] Raw telemetry database behavior verified.
-- [ ] Invalid telemetry audit records reviewed.
-- [ ] Failed-message recovery and audit results verified.
-- [ ] Pump command message delivery verified if required.
-- [ ] Physical pump operation tested separately if required.
-- [ ] Results recorded before opening a Pull Request.
-
-**## 15. Troubleshooting**
-
-**### ModuleNotFoundError**
-
-Confirm that the working directory is `02_software/backend/`, then install the project dependencies:
+Install them with:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-**### Pytest Not Found**
+### 12.2 `.env.example`
 
-Install pytest:
+Provides an example configuration template, if populated.
 
-```powershell
-python -m pip install pytest
-```
-
-**### Test Failure**
-
-Run the failing module with a short traceback:
+Inspect it before starting the application:
 
 ```powershell
-python -m pytest -v --tb=short tests/test_integration_telemetry_pipeline.py
+Get-Content .\.env.example
 ```
 
-Replace the filename with the module that failed. Review the assertion, traceback, test setup, and recent code changes before modifying the implementation.
+Use local environment variables or a local `.env` file according to the application's configuration code. Never commit credentials or private broker details.
 
-**### MQTT Connection Failure**
+### 12.3 `.gitignore`
+
+Defines files that Git should ignore.
+
+Review it to ensure that virtual environments, Python caches, local secrets, and generated data are handled appropriately for the project.
+
+### 12.4 `.gitkeep`
+
+Usually used to keep an otherwise empty directory tracked by Git. Its presence does not imply any application logic.
+
+---
+
+## 13. Recommended Verification Order
+
+For a focused backend verification, use this order:
+
+| Step | Test or check | Purpose |
+|---|---|---|
+| 1 | `test_validation.py` | Verify telemetry validation |
+| 2 | `test_database_manager.py` | Verify database operations |
+| 3 | `test_raw_database_manager.py` | Verify raw-data storage |
+| 4 | `test_telemetry_repository.py` | Verify repository behavior |
+| 5 | `test_invalid_telemetry_processor.py` | Verify invalid-data handling |
+| 6 | `test_telemetry_recovery.py` | Verify recovery behavior |
+| 7 | `test_subscriber.py` | Verify subscriber logic |
+| 8 | `test_api.py` | Verify REST API behavior |
+| 9 | `test_integration_telemetry_pipeline.py` | Verify cross-component behavior |
+| 10 | `pump_command_test.py` | Verify the tested pump-command workflow |
+| 11 | Simulator runs | Verify selected end-to-end scenarios |
+| 12 | Manual API checks | Verify responses against stored data |
+
+This is a recommended execution order, not a claim about test dependencies or a guarantee that all tests are isolated.
+
+---
+
+## 14. Troubleshooting
+
+### Pytest is not recognized
+
+Use:
+
+```powershell
+python -m pytest tests -v
+```
+
+This invokes pytest through the selected Python interpreter.
+
+### Dependencies are missing
+
+Run:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### MQTT connection fails
 
 Check:
 
-- Internet connectivity.
-- Broker hostname and port.
-- Broker availability.
-- Firewall or network restrictions.
-- Credentials, if required.
-- Whether the script uses the expected configuration values.
+- The broker is running and reachable.
+- The broker address and port match the application configuration.
+- Credentials are correct, if authentication is enabled.
+- Publisher and subscriber use compatible topic names.
+- The simulator and subscriber use the intended environment.
 
-**### No Telemetry Received**
-
-Confirm that the publisher and subscriber use the same broker and telemetry topic. Start the subscriber before the publisher and review both scripts' connection logs.
-
-Check whether each script loads environment variables or uses a default topic.
-
-**### Invalid Telemetry Not Recorded**
+### API cannot start
 
 Check:
 
-- Whether the subscriber received the message.
-- The validation result and processing logs.
-- The configured invalid and failed storage paths.
-- Whether the message was repaired, rejected, marked for retry, or recorded as unrepairable.
-- Whether the processing component writes to the database or JSONL audit files.
+- The command is executed from the backend directory.
+- The application object in `api/main.py` is named `app`.
+- Required dependencies are installed.
+- Imports resolve correctly.
+- The requested port is available.
 
-**### Recovery Test Failure**
+### Database tests fail
 
-Check the failed-message storage, retry limit, recovery logs, and audit records. Confirm whether the payload meets the supported repair rules and whether the expected result is recovery, duplicate, conflict, invalid, or continued failure.
+Check:
 
-**### Test Count Differs From 108**
+- Database paths and permissions.
+- Whether the test uses a temporary database.
+- Whether previous test runs left persistent data.
+- Whether the database schema matches the code.
+- Whether multiple processes are accessing the same database.
 
-The count can change as tests are added, removed, renamed, or excluded. Run:
+### Recovery tests fail
 
-```powershell
-python -m pytest --collect-only -q
-```
+Check:
 
-This lists discovered tests without executing them.
+- The configured failed-data directory.
+- The expected input file format.
+- Validation and repository behavior.
+- Duplicate or conflict handling.
+- Whether the test expects an isolated directory.
+- Whether the recovery worker is running when required.
 
-**### Simulator Scenario Not Recognized**
+### A test passes locally but fails in the full suite
 
-Inspect `simulators/mqtt_scenario_simulator.py` for its supported scenario selection and command-line arguments. Do not assume that all simulators use the same command syntax.
+Check for shared state, fixed database paths, test ordering assumptions, external broker dependencies, and cleanup problems.
 
-**### Database Records Are Missing**
-
-Confirm the active database path and configuration. Verify that the telemetry passed validation, the repository save operation succeeded, and the expected record was committed to the intended database.
-
-Do not infer successful persistence solely from an MQTT publisher's success message.
-
-**### Invalid or Failed Records Are Missing**
-
-Check the relevant processing path and storage directory. Not every invalid payload is necessarily placed in the failed queue, and the invalid processor and recovery service may write different JSONL formats.
-
-**### Storage Files Change During Recovery**
-
-The recovery worker may update failed files and append audit records while processing. Avoid editing these files manually during an active run. Use isolated test directories when testing recovery behavior.
-
-**## 16. Recommended Verification Before a Pull Request**
-
-Run the complete automated suite:
+Use:
 
 ```powershell
-python -m pytest -v --tb=short
+python -m pytest tests -x -vv --tb=long
 ```
 
-Then execute the manual MQTT tests required by the change:
+to capture the first failure with detailed information.
 
-- Broker connectivity.
-- Valid telemetry publishing and receiving.
-- Invalid telemetry processing.
-- Relevant scenario simulator cases.
-- Pump command delivery, if affected by the change.
+---
 
-Review the relevant primary database, raw database, failed queue, invalid audit files, and reprocessing audit files when verifying data-storage behavior.
+## 15. Final Verification Checklist
 
-Record the actual results from the current checkout. A passing automated suite is an important verification step, but live MQTT behavior, manual simulator scenarios, physical hardware operation, and production deployment settings require their own checks.
+### Automated tests
 
-For broader project context and implementation status, see `README.md`.
+- [ ] Dependencies are installed.
+- [ ] Pytest discovers the expected test functions.
+- [ ] All required automated tests pass.
+- [ ] Failures and skipped tests have been reviewed.
+- [ ] Tests do not unintentionally depend on stale local data.
+
+### Telemetry pipeline
+
+- [ ] Valid telemetry is accepted.
+- [ ] Invalid telemetry follows the expected handling path.
+- [ ] Raw and processed storage behave as intended.
+- [ ] Repository operations behave correctly.
+- [ ] Recovery behavior is verified with test assertions.
+- [ ] Duplicate and conflict cases are handled as intended.
+
+### API
+
+- [ ] The API starts successfully.
+- [ ] The health route responds as expected.
+- [ ] Telemetry endpoints return the expected response format.
+- [ ] Query filters behave correctly.
+- [ ] Returned data matches the current database.
+
+### MQTT and simulators
+
+- [ ] Broker connectivity is verified where required.
+- [ ] The subscriber receives simulator messages.
+- [ ] Valid and invalid simulator scenarios have been checked.
+- [ ] Test messages use the intended broker and topics.
+
+### Pump commands
+
+- [ ] The command test passes.
+- [ ] Publisher behavior has been inspected.
+- [ ] Hardware-impacting commands are tested only in an appropriate environment.
+
+---
+
+## 16. Reporting Test Results
+
+After running the full suite:
+
+```powershell
+python -m pytest tests -v
+```
+
+Record:
+
+- Date and time of the run.
+- Python version.
+- Test command.
+- Number of passed, failed, skipped, and errored tests.
+- Any external services required.
+- Any failures and their causes.
+
+Do not reuse an old pass count as the result of a new run.
+
+**Final status should be based on the latest actual test output, not on the existence of test files or a previous successful run.**
+
