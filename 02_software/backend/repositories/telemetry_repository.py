@@ -173,7 +173,6 @@ def save_telemetry(telemetry):
         except sqlite3.IntegrityError as exc:
             connection.rollback()
 
-            # Recheck in case another writer inserted the same key.
             try:
                 existing = _find_existing_reading(data)
             except Exception as check_exc:
@@ -238,6 +237,7 @@ def _read_from_all_databases(query, params=()):
 
 
 def _validate_limit(limit):
+    """Ensure limit is a positive integer."""
     if (
         isinstance(limit, bool)
         or not isinstance(limit, int)
@@ -246,44 +246,107 @@ def _validate_limit(limit):
         raise ValueError("limit must be a positive integer.")
 
 
-def get_latest_telemetry(limit=100):
-    """Return the latest readings across all managed databases."""
-    _validate_limit(limit)
+def _validate_timestamp(timestamp, name):
+    """Validate an optional Unix timestamp filter."""
+    if timestamp is None:
+        return
 
-    rows = _read_from_all_databases(
-        """
-        SELECT *
-        FROM telemetry
-        """
+    if (
+        isinstance(timestamp, bool)
+        or not isinstance(timestamp, int)
+        or timestamp < 1
+    ):
+        raise ValueError(
+            f"{name} must be a positive Unix timestamp integer."
+        )
+
+
+def _get_filtered_telemetry(
+    device_id=None,
+    limit=100,
+    start_timestamp=None,
+    end_timestamp=None,
+):
+    """Read telemetry with optional device and inclusive time filters."""
+    _validate_limit(limit)
+    _validate_timestamp(start_timestamp, "start_timestamp")
+    _validate_timestamp(end_timestamp, "end_timestamp")
+
+    if (
+        start_timestamp is not None
+        and end_timestamp is not None
+        and start_timestamp > end_timestamp
+    ):
+        raise ValueError(
+            "start_timestamp must be earlier than or equal to end_timestamp."
+        )
+
+    conditions = []
+    params = []
+
+    if device_id is not None:
+        if not isinstance(device_id, str) or not device_id.strip():
+            raise ValueError("device_id must be a non-empty string.")
+
+        conditions.append("device_id = ?")
+        params.append(device_id)
+
+    if start_timestamp is not None:
+        conditions.append("timestamp >= ?")
+        params.append(start_timestamp)
+
+    if end_timestamp is not None:
+        conditions.append("timestamp <= ?")
+        params.append(end_timestamp)
+
+    where_clause = (
+        f"WHERE {' AND '.join(conditions)}"
+        if conditions
+        else ""
     )
 
-    rows.sort(
-        key=lambda row: (row["timestamp"], row["id"]),
-        reverse=True,
-    )
-
-    return rows[:limit]
-
-
-def get_telemetry_by_device(device_id, limit=100):
-    """Return the latest readings for one device."""
-    if not isinstance(device_id, str) or not device_id.strip():
-        raise ValueError("device_id must be a non-empty string.")
-
-    _validate_limit(limit)
-
     rows = _read_from_all_databases(
-        """
+        f"""
         SELECT *
         FROM telemetry
-        WHERE device_id = ?
+        {where_clause}
         """,
-        (device_id,),
+        tuple(params),
     )
 
+    # Merge rows from every managed database before applying the limit.
     rows.sort(
         key=lambda row: (row["timestamp"], row["id"]),
         reverse=True,
     )
 
     return rows[:limit]
+
+
+def get_latest_telemetry(
+    limit=100,
+    start_timestamp=None,
+    end_timestamp=None,
+):
+    """Return latest readings, optionally restricted to a time range."""
+    return _get_filtered_telemetry(
+        limit=limit,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+
+
+def get_telemetry_by_device(
+    device_id,
+    limit=100,
+    start_timestamp=None,
+    end_timestamp=None,
+):
+    """Return readings for one device, optionally restricted to a time range."""
+    return _get_filtered_telemetry(
+        device_id=device_id,
+        limit=limit,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+
