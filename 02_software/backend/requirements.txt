@@ -1,4 +1,14 @@
+
 paho-mqtt>=2.1.0
 python-dotenv
 pydantic>=2,<3
+
+# FastAPI REST API
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# API testing
+httpx>=0.27.0
+
+# Testing
 pytest>=9.0
